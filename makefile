@@ -1,9 +1,17 @@
-F74XXXXXX: 
-	g++ P74XXXXXX.cpp -o P74XXXXXX
+CC = gcc
+CFLAGS = -Wall
+
+cache: cache.o
+	$(CC) -o cache cache.o -lm
+	
+cache.o: cache.c
+	$(CC) -c cache.c
+	
+
 clean:
-	rm P74XXXXXX
+	rm -f *.o *~ cache
 test1:
-	./P74XXXXXX -input trace/trace1.txt -output out1
+	./cache 2048 64 64 l
 test2:
 	./P74XXXXXX -input trace/trace2.txt -output out2
 test3:
