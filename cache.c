@@ -3,6 +3,12 @@
 #include <string.h>
 #include <math.h>
 
+struct Block {
+    int tag;
+    int v;
+    int size;
+};
+
 typedef struct {
     int nk;
     int assoc;
@@ -20,146 +26,128 @@ typedef struct {
     unsigned long long addr;
 } Access;
 
-int counting(int tag, int index, int set, int assoc, char *rw,
-        int *rh, int *rm, int *wh, int *wm, int mem[set][assoc+1], int victim[set][assoc+1]) {
+void swap(struct Block *x, struct Block *y) {
+    struct Block tmp = *x;
+    *x = *y;
+    *y = tmp;
+}
+
+void bubble(struct Block index[]) {
+    for (int i=0; i<63; i++) {
+        for (int j=0; j<63-i; j++) {
+            if (index[j].v > index[j+1].v)
+                swap(&index[j],&index[j+1]);
+        }
+    }
+}
+
+void counting(int tag, int index, int set, int assoc, char *rw,
+        int *rh, int *rm, int *wh, int *wm, struct Block mem[set][assoc], int age) {
 
     int read_hit=0;
     int read_miss=0;
     int write_hit=0;
     int write_miss=0;
 
-    for (int i=1; i<assoc+1; i++) {
-        if ((victim[index][i] < 0) || (victim[index][i] > 64))
-            victim[index][i] = 0;
-    }
-    // read : 114
-    // write : 119
+    // ASCII => r=114  w=119
     int r = (int)rw[0];
-    if ((mem[index][0] < 0) || (mem[index][0] > 64))
-        mem[index][0] = 0; //每個set中資料個數
+
+    int size=0;
+    for (int i=0; i<assoc; i++) {
+        size += mem[index][i].size;
+    }
+
+    // 初始化
+    if (size == 0) {
+        for (int i=0; i<assoc; i++) {
+            mem[index][i].v = 0;
+            mem[index][i].tag = -1;
+        }
+    }
 
     // read operation
     if (r == 114) {
-        for (int i=1; i < assoc+1; i++) {
-            if (mem[index][i] == tag) {
-                // 有被存取到的index  victim值 +1
-                victim[index][i] += 1;
+        for (int i=0; i < assoc; i++) {
+            if (mem[index][i].tag == tag) {
+                // 有被存取到的index  victim值=age
+                mem[index][i].v = age;
                 read_hit++;
                 *rh = read_hit;
-                return 0;
+                return;
             }
         }
+        // 沒有空block => LRU
+        if (size == assoc) {
+            bubble(mem[index]);
+            mem[index][0].tag = tag;
+            mem[index][0].v = age;
+            mem[index][0].size = 1;
+            read_miss++;
+            *rm = read_miss;
+            return;
+        }
         // fill in missing block
-        int ind = 1;
-        while (mem[index][0] <= assoc+1) {
+        int ind = 0;
+        while (size <= assoc) {
             // 找空block
-            if ((mem[index][ind] > 0) && (mem[index][ind] <= 1048064)) {
-                mem[index][0] += 1;
+            if ((mem[index][ind].size) == 1) {
                 ind++;
-                // 沒有空block => LRU
-                if (ind >= assoc+1) {
-                    int tmp=0;
-                    int min=1;
-                    //for (int i=1; i<assoc; i++) {
-                    //quicksort(victim[index], 1, assoc);
-                    for (int i=2; i<assoc+1; i++) {
-                        //printf("victim[%d][%d] = %d\n", index,i,victim[index][i]);
-                        //printf("victim[index][%d] = %d ",i,victim[index][i]);
-                        //printf("victim[index][%d] = %d\n",i+1,victim[index][i+1]);
-
-                        //printf("i : %d\n",i);
-                        if (victim[index][min] > victim[index][i]) {
-                            //printf("victim[index][%d] = %d ",i,victim[index][i]);
-                            //printf("victim[index][%d] = %d\n",i+1,victim[index][i+1]);
-                            min = i;
-                            //tmp = victim[index][i];
-                            //victim[index][i] = victim[index][i+1];
-                            //victim[index][i+1] = tmp;
-                        }
-                    }
-                    //printf("min = %d\n",victim[index][min]);
-                    //printf("min = %d\n",min);
-                    mem[index][victim[index][min]] = tag;
-                    // 此block 被換掉 victim值歸零
-                    victim[index][min] = 0;
-                    read_miss++;
-                    *rm = read_miss;
-                    return 0;
-                }
             }
-            else { // 有空block 直接寫入
-                //if (ind > assoc)
-                    //printf("ind : %d\n",ind);
-                mem[index][ind] = tag;
-                //printf("ind : %d\n",ind);
-                // 有被存取到的index  victim值 +1
-                victim[index][ind] += 1;
+            else { 
+                // 有空block 直接寫入
+                mem[index][ind].tag = tag;
+                mem[index][ind].size = 1;
+                mem[index][ind].v = age;
                 read_miss++;
                 *rm = read_miss;
-                return 0;
+                return;
             }
         }
     }
+    
     // write operation
     else {
-        for (int i=1; i < assoc+1; i++) {
-            if (mem[index][i] == tag) {
-                // 有被存取到的index  victim值 +1
-                victim[index][i] += 1;
+        for (int i=0; i < assoc; i++) {
+            if (mem[index][i].tag == tag) {
+                // 有被存取到的index  victim = age
+                mem[index][i].v = age;
                 write_hit++;
                 *wh = write_hit;
-                return 0;
+                return;
             }
         }
-        int ind = 1;      //索引值
-        while(mem[index][0] <= assoc+1) {  //set 還未滿
+        // 沒有空block => LRU
+        if (size == assoc) {
+            bubble(mem[index]);
+            mem[index][0].tag = tag;
+            mem[index][0].v = age;
+            mem[index][0].size = 1;
+            write_miss++;
+            *wm = write_miss;
+            return;
+        }
+        // fill in missing block
+        int ind = 0;
+        while (size <= assoc) {
             // 找空block
-            if ((mem[index][ind] > 0) && (mem[index][ind] <= 1048064)) {
-            //if (mem[index][ind] > 0) {
-                mem[index][0] += 1;
+            if ((mem[index][ind].size) == 1) {
                 ind++;
-                // 沒有空block
-                if (ind >= assoc+1) {
-                    //printf("mem[%d][0] = %d\n", index,mem[index][0]);
-                    // do LRU
-                    int tmp=0;
-                    int min=1;
-                    //quicksort(victim[index], 1, assoc);
-                    for (int i=2; i < assoc+1; i++) {
-                        if (victim[index][min] > victim[index][i]) {
-                            min = i;
-                            //tmp = victim[index][i];
-                            //victim[index][i] = victim[index][i+1];
-                            //victim[index][i+1] = tmp;
-                        }
-                    }
-                    //printf("min : %d\n",min);
-                    mem[index][victim[index][min]] = tag;
-                    // 此block被換掉 victim值歸零
-                    victim[index][min] = 0;
-                    //mem[index][ind-1] = tag;
-                    write_miss++;
-                    *wm = write_miss;
-                    return 0;
-                }
             }
-            else {
-                //if (ind > 64)
-                    //printf("ind : %d\n",ind);
+            else { 
                 // 有空block 直接寫入
-                mem[index][ind] = tag; 
-                // 有被存取到的index  victim值 +1
-                victim[index][ind] += 1;
+                mem[index][ind].tag = tag;
+                mem[index][ind].size = 1;
+                mem[index][ind].v = age;
                 write_miss++;
                 *wm = write_miss;
-                return 0;
+                return;
             }
         }
     } 
-    return 0;
+    return;
 }
 
-int *simulator(Info info, Access as,int rh, int rm, int wh, int wm) {
+int *simulator(Info info, Access as,int rh, int rm, int wh, int wm, int age) {
     int nk = info.nk;            // cache size
     int assoc = info.assoc;      // 關聯度
     int bsize = info.bsize;      // block size
@@ -167,7 +155,6 @@ int *simulator(Info info, Access as,int rh, int rm, int wh, int wm) {
     int num_block = nk / bsize;   // number of blocks
     int set = num_block / assoc;
 
-//    int index = log2(num_block);  // index
     int set_f = log2(set);  // set 數，每個set中有assoc個block
     int offset_f = log2(bsize);
     int tag_f = 64 - set_f - offset_f;
@@ -180,10 +167,9 @@ int *simulator(Info info, Access as,int rh, int rm, int wh, int wm) {
     int index = block_addr % set;
 
     static int count[4]= {0,0,0,0};
-    int mem[set][assoc+1];
-    int victim[set][assoc+1];   // 紀錄victim block
+    struct Block mem[set][assoc+1];
 
-    counting(tag, index, set, assoc, rw, &rh, &rm, &wh, &wm, mem, victim);
+    counting(tag, index, set, assoc, rw, &rh, &rm, &wh, &wm, mem, age);
     count[0]+= rh;
     count[1]+= rm;
     count[2]+= wh;
@@ -213,27 +199,29 @@ int openfile(char path[], Info info) {
     int *total;
     int *count;
     Access as;
+    int age=1;
     while(!!i) {
         fscanf(fp,"%s%llx", rw, &addr);
         strcpy(as.rw, rw);
         as.addr = addr;
-        // function
-        total = simulator(info, as, rh,rm,wh,wm);
-        // op + addr
-        //printf("%s %llx\n", rw, addr);
+        total = simulator(info, as, rh,rm,wh,wm,age);
+        age++;
         i--;
     }
     double miss_rate = (double)(total[1] + total[3])/1000000;
-    printf("total rh: %d\n",total[0]);
-    printf("total rm: %d\n",total[1]);
-    printf("total wh: %d\n",total[2]);
-    printf("total wm: %d\n",total[3]);
-    printf("Miss rate: %f\n", miss_rate);
-//    printf("Hit  rate: %f\n", 1 - miss_rate);
+    double read_miss_rate = (double)total[1]/(double)(total[1] + total[0]);
+    double write_miss_rate = (double)total[3]/(double)(total[2] + total[3]);
+    printf("read   hit: %d\n",total[0]);
+    printf("read  miss: %d\n",total[1]);
+    printf("write  hit: %d\n",total[2]);
+    printf("write miss: %d\n",total[3]);
+    printf("Total  Miss rate: %f%%\n", miss_rate*100);
+    printf("Read   Miss rate: %f%%\n", read_miss_rate*100);
+    printf("write  Miss rate: %f%%\n", write_miss_rate*100);
+    
     fclose(fp);
     return 0;
 }
-
 
 int main(int argc, char *argv[])
 {
@@ -244,7 +232,6 @@ int main(int argc, char *argv[])
     char *repl = argv[4];         // replacement policy
     int num_block = nk / bsize;   // number of blocks
     int set = num_block / assoc;
-//    int index = log2(num_block);  // index
     int set_f = log2(set);  // set 數，每個set中有assoc個block
     int offset_f = log2(bsize);
     int tag_f = 64 - set_f - offset_f;
@@ -261,14 +248,12 @@ int main(int argc, char *argv[])
     info.offset_f = offset_f;
     info.tag_f = tag_f;
 
-//    int num_block = nk / bsize;
     char path[] = "trace/429.mcf-184B.trace.txt/429.mcf-184B.trace.txt";
 
     if (!!(nk % bsize)) {
         printf("The size should be power of 2");
         exit(1);
     }
-
     printf("cache size   : %d KB\n",nk/1024);
     printf("associativity: %d-ways\n",assoc);
     printf("block size   : %d B\n",bsize);
@@ -276,6 +261,5 @@ int main(int argc, char *argv[])
 
     // 開檔
     openfile(path, info);
-//    printf("Number of blocks : %d\n", index);
     return 0;
 } 
